@@ -26,14 +26,17 @@ from app.rag import (
     retrieve_documents,
 )
 
-VISION_SYSTEM = """You are Medically, a careful multimodal medical information assistant.
-Use the retrieved knowledge-base context together with the patient's image, question,
-and conversation history.
-Do not invent findings that are not supported by the image or the context.
-Stay consistent with symptoms already discussed in the conversation.
-If unsure, say what is uncertain and recommend seeing a clinician.
-Keep the answer concise (about 3-6 sentences). Start directly.
-End with one short educational disclaimer sentence.
+VISION_SYSTEM = """You are Medically, a multimodal medical information assistant with vision.
+An image IS attached to this request. You can see it — never say you cannot analyze,
+view, or access the image.
+
+How to answer:
+1) First describe what you actually see (location, color, texture, lesions, swelling, etc.).
+2) Then give possible educational differentials that fit the visible findings AND the
+   retrieved knowledge-base context / conversation history.
+3) Do not invent details that are not visible. If the photo is unclear, say what is unclear.
+4) Keep the answer concise (3-6 sentences). Start directly with visual findings.
+5) End with one short educational disclaimer (not a diagnosis; see a clinician).
 """
 
 
@@ -71,30 +74,33 @@ def ask_with_image(
         encoded, mime = encode_image_file(image_path)
 
         client = OpenAI(api_key=require_openai_key())
+        # Put the image first so the model grounds on pixels, then supporting text.
         completion = client.chat.completions.create(
             model=OPENAI_VISION_MODEL,
             temperature=LLM_TEMPERATURE,
-            max_tokens=500,
+            max_tokens=600,
             messages=[
                 {"role": "system", "content": VISION_SYSTEM},
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "text",
-                            "text": (
-                                f"Conversation history:\n{history_text}\n\n"
-                                f"Patient question:\n{question}\n\n"
-                                f"Retrieved knowledge-base context:\n{context}\n\n"
-                                "Using the image, history, and context, respond carefully."
-                            ),
-                        },
-                        {
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:{mime};base64,{encoded}",
-                                "detail": "low",
+                                "detail": "high",
                             },
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                "Look at the attached photo and answer the patient.\n\n"
+                                f"Patient question:\n{question}\n\n"
+                                f"Conversation history:\n{history_text}\n\n"
+                                f"Retrieved knowledge-base context (supporting only):\n{context}\n\n"
+                                "Remember: describe visible findings from the photo first. "
+                                "Do not claim you cannot see the image."
+                            ),
                         },
                     ],
                 },
