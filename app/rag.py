@@ -6,8 +6,7 @@ from typing import Any
 from langchain.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from app.config import (
     DB_FAISS_PATH,
@@ -34,8 +33,10 @@ Question:
 """
 
 
-def get_embedding_model() -> HuggingFaceEmbeddings:
-    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+@lru_cache(maxsize=1)
+def get_embedding_model() -> OpenAIEmbeddings:
+    require_openai_key()
+    return OpenAIEmbeddings(model=EMBEDDING_MODEL)
 
 
 @lru_cache(maxsize=1)
@@ -52,6 +53,7 @@ def get_vectorstore() -> FAISS:
     )
 
 
+@lru_cache(maxsize=1)
 def load_llm() -> ChatOpenAI:
     require_openai_key()
     return ChatOpenAI(
@@ -60,6 +62,7 @@ def load_llm() -> ChatOpenAI:
     )
 
 
+@lru_cache(maxsize=1)
 def build_qa_chain() -> RetrievalQA:
     prompt = PromptTemplate(
         template=CUSTOM_PROMPT_TEMPLATE,

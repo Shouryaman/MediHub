@@ -12,7 +12,7 @@ Ask about symptoms in text, upload a clinical photo, or speak. Every answer incl
 
 | Capability | Details |
 |------------|---------|
-| **RAG Q&A** | LangChain + FAISS + HuggingFace embeddings + OpenAI |
+| **RAG Q&A** | LangChain + FAISS + OpenAI embeddings (no local torch) |
 | **Citations** | Always returns source filename, page, and snippet |
 | **Vision** | GPT-4o reviews an image *with* retrieved KB context |
 | **Voice in** | OpenAI Whisper speech-to-text |
@@ -36,8 +36,9 @@ Built by combining a classic medical RAG chatbot with a MediEase-style vision + 
 
 - **Python 3.11+**
 - **FastAPI** + Uvicorn
-- **OpenAI** — `gpt-4o-mini` (text), `gpt-4o` (vision), Whisper (STT), TTS
-- **LangChain** + **FAISS** + **sentence-transformers/all-MiniLM-L6-v2**
+- **OpenAI** — `gpt-4o-mini` (text + vision), Whisper (STT), TTS, `text-embedding-3-small`
+- **LangChain** + **FAISS** (API embeddings — **no local torch**, Render-friendly)
+- **Pillow** image resize for vision uploads
 - **PyPDF** document loading
 - Vanilla **HTML / CSS / JS** frontend
 
@@ -95,11 +96,13 @@ Edit `.env`:
 ```env
 OPENAI_API_KEY=sk-your-key-here
 OPENAI_MODEL=gpt-4o-mini
-OPENAI_VISION_MODEL=gpt-4o
+OPENAI_VISION_MODEL=gpt-4o-mini
+EMBEDDING_MODEL=text-embedding-3-small
 ```
 
 Never commit `.env`.
 
+> **Render note:** This stack avoids local torch/sentence-transformers so photo uploads do not OOM small instances. Keep `vectorstore/db_faiss` in the deploy (rebuilt with OpenAI embeddings).
 ### 3. Build the vector index
 
 Place medical PDFs in `data/`, then:

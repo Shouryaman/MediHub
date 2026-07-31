@@ -6,7 +6,7 @@ from pathlib import Path
 
 from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.config import (
@@ -15,6 +15,7 @@ from app.config import (
     DATA_PATH,
     DB_FAISS_PATH,
     EMBEDDING_MODEL,
+    require_openai_key,
 )
 
 
@@ -32,7 +33,6 @@ def load_pdf_files(data_path: Path):
     if not documents:
         raise ValueError(f"No PDF files found in {data_path}. Add medical PDFs first.")
 
-    # Normalize metadata so citations are stable in the UI
     for doc in documents:
         source = doc.metadata.get("source", "")
         doc.metadata["source"] = Path(source).name if source else "unknown.pdf"
@@ -49,7 +49,9 @@ def create_chunks(documents):
 
 
 def build_vectorstore(text_chunks):
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    require_openai_key()
+    embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+    # Batch to avoid huge peak memory / request bodies
     db = FAISS.from_documents(text_chunks, embeddings)
     DB_FAISS_PATH.parent.mkdir(parents=True, exist_ok=True)
     db.save_local(str(DB_FAISS_PATH))
@@ -58,6 +60,7 @@ def build_vectorstore(text_chunks):
 
 def main():
     print(f"Loading PDFs from: {DATA_PATH}")
+    print(f"Embedding model: {EMBEDDING_MODEL} (OpenAI API — no local torch)")
     documents = load_pdf_files(DATA_PATH)
     print(f"Loaded {len(documents)} pages")
 
