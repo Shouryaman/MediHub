@@ -17,11 +17,20 @@ from app.config import (
     VISION_MAX_SIDE,
     require_openai_key,
 )
-from app.rag import format_context, format_references, retrieve_documents
+from app.rag import (
+    build_retrieval_query,
+    format_chat_history,
+    format_context,
+    format_references,
+    normalize_history,
+    retrieve_documents,
+)
 
 VISION_SYSTEM = """You are Medically, a careful multimodal medical information assistant.
-Use the retrieved knowledge-base context together with the patient's image and question.
+Use the retrieved knowledge-base context together with the patient's image, question,
+and conversation history.
 Do not invent findings that are not supported by the image or the context.
+Stay consistent with symptoms already discussed in the conversation.
 If unsure, say what is uncertain and recommend seeing a clinician.
 Keep the answer concise (about 3-6 sentences). Start directly.
 End with one short educational disclaimer sentence.
@@ -44,14 +53,21 @@ def encode_image_file(image_path: str | Path) -> tuple[str, str]:
     return encoded, "image/jpeg"
 
 
-def ask_with_image(question: str, image_path: str | Path) -> dict[str, Any]:
+def ask_with_image(
+    question: str,
+    image_path: str | Path,
+    history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     question = (question or "").strip() or (
         "Please review this medical image and describe possible concerns."
     )
 
     try:
-        documents = retrieve_documents(question)
+        prior = normalize_history(history)
+        search_query = build_retrieval_query(question, prior)
+        documents = retrieve_documents(search_query)
         context = format_context(documents)
+        history_text = format_chat_history(prior)
         encoded, mime = encode_image_file(image_path)
 
         client = OpenAI(api_key=require_openai_key())
@@ -67,9 +83,10 @@ def ask_with_image(question: str, image_path: str | Path) -> dict[str, Any]:
                         {
                             "type": "text",
                             "text": (
+                                f"Conversation history:\n{history_text}\n\n"
                                 f"Patient question:\n{question}\n\n"
                                 f"Retrieved knowledge-base context:\n{context}\n\n"
-                                "Using the image and context, respond carefully."
+                                "Using the image, history, and context, respond carefully."
                             ),
                         },
                         {
@@ -92,5 +109,4 @@ def ask_with_image(question: str, image_path: str | Path) -> dict[str, Any]:
             "transcript": None,
         }
     finally:
-        # Help Render's small RAM reclaim buffers after large image requests
         gc.collect()

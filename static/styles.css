@@ -133,6 +133,31 @@ body {
   text-align: right;
 }
 
+.top-actions {
+  display: grid;
+  justify-items: end;
+  gap: 0.55rem;
+}
+
+.reset-btn {
+  border: 1px solid rgba(232, 243, 239, 0.35);
+  background: rgba(15, 28, 26, 0.35);
+  color: #e8f3ef;
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.reset-btn:hover {
+  background: rgba(45, 212, 191, 0.15);
+  border-color: #2dd4bf;
+  transform: translateY(-1px);
+}
+
 .panel {
   background: var(--panel);
   border-radius: calc(var(--radius) + 6px);
@@ -462,6 +487,11 @@ textarea:focus {
   .app {
     width: min(100% - 1rem, 920px);
     padding-top: 1rem;
+  }
+
+  .top-actions {
+    width: 100%;
+    justify-items: start;
   }
 
   .disclaimer {

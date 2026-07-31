@@ -3,9 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from langchain.chains import RetrievalQA
 from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from app.config import (
@@ -17,20 +15,17 @@ from app.config import (
     require_openai_key,
 )
 
-CUSTOM_PROMPT_TEMPLATE = """You are Medically, a careful medical information assistant.
-Use ONLY the context below to answer the user's question.
+SYSTEM_PROMPT = """You are Medically, a careful medical information assistant.
+Use the retrieved knowledge-base context to answer the user.
+Use the conversation history to stay consistent with prior symptoms and questions.
 If the context is insufficient, say you do not know based on the available references.
 Do not invent diagnoses, drugs, or dosages outside the context.
 Keep the answer clear and concise. Start directly — no preamble.
 Always remind the user this is educational information, not a substitute for a clinician,
 but keep that reminder to one short closing sentence.
-
-Context:
-{context}
-
-Question:
-{question}
 """
+
+MAX_HISTORY_MESSAGES = 12
 
 
 @lru_cache(maxsize=1)
@@ -62,19 +57,38 @@ def load_llm() -> ChatOpenAI:
     )
 
 
-@lru_cache(maxsize=1)
-def build_qa_chain() -> RetrievalQA:
-    prompt = PromptTemplate(
-        template=CUSTOM_PROMPT_TEMPLATE,
-        input_variables=["context", "question"],
-    )
-    return RetrievalQA.from_chain_type(
-        llm=load_llm(),
-        chain_type="stuff",
-        retriever=get_vectorstore().as_retriever(search_kwargs={"k": RETRIEVER_K}),
-        return_source_documents=True,
-        chain_type_kwargs={"prompt": prompt},
-    )
+def normalize_history(history: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+    if not history:
+        return []
+    cleaned: list[dict[str, str]] = []
+    for item in history[-MAX_HISTORY_MESSAGES:]:
+        role = (item.get("role") or "").strip().lower()
+        content = (item.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        cleaned.append({"role": role, "content": content[:2000]})
+    return cleaned
+
+
+def format_chat_history(history: list[dict[str, str]]) -> str:
+    if not history:
+        return "None yet."
+    lines: list[str] = []
+    for msg in history:
+        label = "User" if msg["role"] == "user" else "Assistant"
+        lines.append(f"{label}: {msg['content']}")
+    return "\n".join(lines)
+
+
+def build_retrieval_query(question: str, history: list[dict[str, str]]) -> str:
+    """Blend recent user turns into retrieval so follow-ups stay on-topic."""
+    prior = [
+        msg["content"]
+        for msg in history
+        if msg["role"] == "user"
+    ][-3:]
+    blended = " ".join([*prior, question]).strip()
+    return blended[:1500] or question
 
 
 def format_references(source_documents: list[Any]) -> list[dict[str, Any]]:
@@ -84,7 +98,7 @@ def format_references(source_documents: list[Any]) -> list[dict[str, Any]]:
         source = metadata.get("source") or metadata.get("file_path") or "Unknown source"
         page = metadata.get("page")
         if isinstance(page, int):
-            page_display = page + 1  # PyPDFLoader is 0-indexed
+            page_display = page + 1
         else:
             page_display = page
         snippet = " ".join((doc.page_content or "").split())
@@ -127,17 +141,36 @@ def format_context(documents: list[Any]) -> str:
     return "\n\n".join(parts)
 
 
-def ask_medically(question: str) -> dict[str, Any]:
+def ask_medically(
+    question: str,
+    history: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     question = (question or "").strip()
     if not question:
         raise ValueError("Question cannot be empty.")
 
-    chain = build_qa_chain()
-    response = chain.invoke({"query": question})
-    references = format_references(response.get("source_documents") or [])
+    prior = normalize_history(history)
+    search_query = build_retrieval_query(question, prior)
+    documents = retrieve_documents(search_query)
+    context = format_context(documents)
+    history_text = format_chat_history(prior)
+
+    user_prompt = (
+        f"Conversation history:\n{history_text}\n\n"
+        f"Retrieved knowledge-base context:\n{context}\n\n"
+        f"Current user question:\n{question}"
+    )
+
+    response = load_llm().invoke(
+        [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    answer = (getattr(response, "content", None) or str(response)).strip()
 
     return {
-        "answer": response.get("result", "").strip(),
-        "references": references,
+        "answer": answer,
+        "references": format_references(documents),
         "suggested_actions": ["upload_image", "ask_voice", "listen"],
     }

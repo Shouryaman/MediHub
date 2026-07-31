@@ -6,7 +6,31 @@ const imageInput = document.getElementById("image-input");
 const imageBtn = document.getElementById("image-btn");
 const micBtn = document.getElementById("mic-btn");
 const micStatus = document.getElementById("mic-status");
+const resetBtn = document.getElementById("reset-btn");
 
+const WELCOME_HTML = `
+  <div class="welcome">
+    <h2>Ask, show a photo, or speak</h2>
+    <p>
+      Start with symptoms in text. Then upload a photo or use voice. Every answer
+      includes knowledge-base references. Follow-ups keep conversation context.
+    </p>
+    <div class="chips">
+      <button type="button" class="chip" data-q="I have red marks on my skin and it is itching a lot. What are possible causes?">
+        Itchy red marks on skin
+      </button>
+      <button type="button" class="chip" data-q="What are common symptoms of migraine?">
+        Migraine symptoms
+      </button>
+      <button type="button" class="chip" data-q="What is hypertension and how is it managed?">
+        Hypertension overview
+      </button>
+    </div>
+  </div>
+`;
+
+/** @type {{role: string, content: string}[]} */
+let conversationHistory = [];
 let lastQuestion = "";
 let mediaRecorder = null;
 let audioChunks = [];
@@ -15,6 +39,26 @@ let isRecording = false;
 function clearWelcome() {
   const welcome = chat.querySelector(".welcome");
   if (welcome) welcome.remove();
+}
+
+function wireChips() {
+  chat.querySelectorAll(".chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const q = chip.getAttribute("data-q");
+      if (q) ask(q);
+    });
+  });
+}
+
+function resetChat() {
+  if (isRecording) stopRecording();
+  conversationHistory = [];
+  lastQuestion = "";
+  input.value = "";
+  imageInput.value = "";
+  chat.innerHTML = WELCOME_HTML;
+  wireChips();
+  input.focus();
 }
 
 function appendMessage(role, html, className = "") {
@@ -43,7 +87,7 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function renderBot(answer, references, suggestedActions) {
+function renderBot(answer, references) {
   const refsHtml =
     references && references.length
       ? `
@@ -119,12 +163,23 @@ function wireFollowups(botNode) {
   });
 }
 
+function pushHistory(role, content) {
+  const text = (content || "").trim();
+  if (!text) return;
+  conversationHistory.push({ role, content: text });
+  // Keep last 12 messages (6 turns)
+  if (conversationHistory.length > 12) {
+    conversationHistory = conversationHistory.slice(-12);
+  }
+}
+
 async function renderAnswer(data) {
   const botNode = appendMessage(
     "bot",
-    renderBot(data.answer, data.references, data.suggested_actions)
+    renderBot(data.answer, data.references)
   );
   setBubbleText(botNode, data.answer || "No answer returned.");
+  pushHistory("assistant", data.answer || "");
   wireFollowups(botNode);
 }
 
@@ -134,6 +189,9 @@ async function ask(question) {
 
   clearWelcome();
   lastQuestion = q;
+
+  const historyForRequest = [...conversationHistory];
+  pushHistory("user", q);
 
   const userNode = appendMessage("user", userBubble());
   setBubbleText(userNode, q);
@@ -145,18 +203,21 @@ async function ask(question) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q }),
+      body: JSON.stringify({ question: q, history: historyForRequest }),
     });
     const data = await res.json().catch(() => ({}));
     pending.remove();
 
     if (!res.ok) {
+      // Roll back the user turn on failure so retries stay clean
+      conversationHistory.pop();
       showError(formatDetail(data.detail) || "Something went wrong. Try again.");
       return;
     }
     await renderAnswer(data);
   } catch (err) {
     pending.remove();
+    conversationHistory.pop();
     showError(err.message || "Network error");
   } finally {
     sendBtn.disabled = false;
@@ -172,8 +233,12 @@ async function askWithImage(file, question) {
     "Please review this image and relate it to possible medical concerns.";
   lastQuestion = q;
 
+  const display = `${q}\n[Photo attached: ${file.name}]`;
+  const historyForRequest = [...conversationHistory];
+  pushHistory("user", display);
+
   const userNode = appendMessage("user", userBubble());
-  setBubbleText(userNode, `${q}\n[Photo attached: ${file.name}]`);
+  setBubbleText(userNode, display);
 
   const pending = appendMessage("bot", typingIndicator());
   sendBtn.disabled = true;
@@ -182,18 +247,21 @@ async function askWithImage(file, question) {
     const body = new FormData();
     body.append("image", file);
     body.append("question", q);
+    body.append("history", JSON.stringify(historyForRequest));
 
     const res = await fetch("/api/chat/vision", { method: "POST", body });
     const data = await res.json().catch(() => ({}));
     pending.remove();
 
     if (!res.ok) {
+      conversationHistory.pop();
       showError(formatDetail(data.detail) || "Vision analysis failed.");
       return;
     }
     await renderAnswer(data);
   } catch (err) {
     pending.remove();
+    conversationHistory.pop();
     showError(err.message || "Network error");
   } finally {
     sendBtn.disabled = false;
@@ -314,12 +382,8 @@ input.addEventListener("keydown", (event) => {
   }
 });
 
-document.querySelectorAll(".chip").forEach((chip) => {
-  chip.addEventListener("click", () => {
-    const q = chip.getAttribute("data-q");
-    if (q) ask(q);
-  });
-});
+wireChips();
+resetBtn.addEventListener("click", resetChat);
 
 imageBtn.addEventListener("click", () => imageInput.click());
 imageInput.addEventListener("change", () => {
